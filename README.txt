@@ -1,1 +1,3 @@
-hi.
+RSA.c contains a basic implementation of the RSA data conversion and cryptographic primatives. As per the standard, these expect as input base-256 integers (octet strings). So I haven't yet integrated these with the BigInt library, which uses base 10 integers.
+
+BigInt.c contains the implementation of an arbitrary precision integer library. It is nearly complete; we just need to add a ModPow function for modular exponentiation. Also, it would be nice to convert the existing Mod() function to use Barrett reduction, as the current implementation not very efficient. When this is complete, the library needs to be converted to operate on base 256 integers, so it can be used for the RSA encryption scheme (shouldn't be too hard).
