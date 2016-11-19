@@ -1,3 +1,5 @@
+debug_rsa
+*.dSYM
 *.pdf
 *.aux
 *.log
