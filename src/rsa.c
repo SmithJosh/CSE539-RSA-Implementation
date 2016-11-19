@@ -41,7 +41,7 @@ int main() {
 	OS2IP("8c 69 50", mod);
 	mpz_set(pubK.modulus, mod);
 	mpz_set(privK.modulus, mod);
-	mpz_set_srt(pubK.publicExponent, "01 00 01", 16);
+	mpz_set_str(pubK.publicExponent, "01 00 01", 16);
 
 	gmp_printf ("%Zd\n", mod);
 
