@@ -19,13 +19,16 @@ Intro goes here.
 
 We follow the FIPS Digital Signature Standard~\cite{fips2013186} to generate key pairs.
 
-\subsection{Pseudorandom Number Generator}
+\subsection{Preliminaries}
+
+\subsubsection{Pseudorandom Number Generator}
 In order to generate random primes, it is important that we use a cryptographically secure pseudorandom number generator. We decide to use the UNIX-based special file {\tt /dev/random}, which generates high-quality pseudorandom numbers that are well-suited for key generation.
 
 The semantics for {\tt /dev/random} vary based on the operating system. In Linux,  {\tt /dev/random} is generated from entropy created by keystrokes, mouse movements, IDE timings, and other kernel processes. In macOS, {\tt /dev/random} data is generated using the Yarrow-160 algorithm, which is a cryptographic pseudorandom number generator. Yarrow-160 outputs random bits using a combination of the SHA1 hash function and three-key triple-DES.
 
 We believe {\tt /dev/random}, as prescribed, is sufficient for our purposes, but the entropy pool can be further improved using specialized programs or hardware random number generators.
 
+\subsubsection{Primality Testing}
 \subsection{Criteria for Key Pairs}
 
 The key pair for RSA consists of the public key $(n, e)$ and the private key $(n, d)$. The RSA modulus $n$ is the product of two distinct prime numbers $p$ and $q$. RSA's security rests on the primality and secrecy of $p$ and $q$, as well as the secrecy of the private exponent $d$. The methodology for generating these parameters varies based on the desired number of bits of security and the desired quality of primes. However, the following desideratum must hold true for all methods.
