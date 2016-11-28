@@ -116,7 +116,7 @@ Method (iii) supports key sizes of length 1024, 2048, and 3072, which offers mor
 \label{tab:aux_len}
 \end{table}
 
-Regarding our actual implementation of method (iii), we closely follow the constraints above and how probable primes are generated from probable auxiliary primes as specified in the DSS~\cite{fips2013186}. There are further constraints to the above, which are specific to method (iii), that we satisfy but do not fully detail here. Howver, one important aspect of method (iii) is that it leverages the Chinese Remainder Theorem to improve performance for key generation.\newline
+Regarding our actual implementation of method (iii), we closely follow the constraints above and how probable primes are generated from probable auxiliary primes as specified in the DSS~\cite{fips2013186}. There are further constraints to the above, which are specific to method (iii), that we satisfy but do not fully detail here. However, one important aspect of method (iii) is that it leverages the Chinese Remainder Theorem to improve performance for key generation.\newline
 
 \noindent \textbf{Private exponent $d$.} The following constraints must hold true for the private exponent $d$.
 
@@ -182,6 +182,43 @@ Kocher also discovered another side-channel attack by measuring the amount of po
 
 \section{Secure Coding}
 
+We next overview secure coding practices that we considered for our implementation, as well as practices that could have further improved our code. These are mostly based on the SEI CERT C Coding Standard~\cite{seacord2008cert}.
+
+\subsection{Integers and Floats}
+
+Handling multiple precision integers and multiple precision floats and understanding conversions between these data types is crucial in implementing RSA.
+
+In regards to integers, we use different types of integers (i.e. {\tt int}, {\t unsigned long int}, and {\tt mpz\_t} (multiple precision integers) for different purposes. For general purpose counters, we can safely use the {\tt int} data type. For representing the size of an object, we can safely use the {\tt size\_t} data type, since this generally covers the entire address space. For any integers that may be used in multiple precision arithmetic, we err on the side of caution
+and use the {\tt unsigned long int} data type. Then finally, for any integers that require multiple precision, we use the {\tt mpz\_t} data type from the GMP Library.
+
+In regards to floating point numbers, we simply use the {\tt mpf\_t} data type from the GMP Library, since their use is limited and the multiple precision float data type offers enough utility for the required use cases.
+
+Further, we also perform adequate range checking, integer overflow checking, and truncation checking. For the generation of key parameters, it is crucial that we perform range checking thoroughly, since a
+single misstep could lead to an incorrect encryption or decryption. Additionally, we err on the side of caution and instantiate integers as either {\tt long int} or {\tt mpz\_t} to prevent integer overflows. Finally, we pay attention to any truncation that may occur as a result of conversions between integers and floats. For example, it is important to consider that while a multiple precision integer square root function is available, the result is
+truncated to an integer. Thus, we must handle such operations more precisely using the {\tt mpf\_t} (multiple precision float) object.
+
+\subsection{Memory Management}
+
+Since memory owned by our process can be accessed and reused by another process in the absence of proper memory management, this could potentially reveal information about secret keys to other processes. Even further, systems with multiple users make it possible for one user to sniff keys from another users' process. Thus, proper memory management is crucial for the secrecy of private keys.
+
+In this regard, we free dynamically allocated memory whenever it is no longer needed. This occurs throughout our implementation in two fashions. First, consider when a new block of memory is allocated using {\tt malloc}. Once the allocated block of memory is no longer in use, memory is freed using the function call {\tt free}. Second, when using the GMP Library to instantiate multiple precision numbers, these numbers are also dynamically allocated. Thus, this memory must
+either be freed using the function call {\tt mpz\_clear} (for integers) or ``zeroized'' to ensure that no information about the secret keys are revealed.
+
+Another aspect of memory management we consider is allocating sufficient memory for an object. In {\tt malloc} calls, we consistently and correctly use {\tt sizeof} to size the memory allocation. For initializing multiple precision numbers, this is done automatically. 
+
+\subsection{Characters and Strings}
+
+One secure coding practice that we should have considered is to cast characters to {\tt unsigned char} before converting them to larger integer sizes. One instance of this is when generating pseudorandom numbers from {\tt /dev/random}, since we sample random characters from this file and then convert it to a pseudorandom multiple precision integer. More broadly, any arguments to character-handling functions should be represented as an {\tt unsigned char}.
+However, this is only applicable to platforms in which {\tt char} data types have the same representation as {\tt signed char} data types.
+
+\subsection{Error Handling}
+
+Another secure coding practice that we should have considered is to handle errors throughout the entire program. Although there are instances in which we do handle errors, our program would be much more robust if it detected and handled all standard library errors and GMP Library errors. Having a consistent and comprehensive error-handling policy would improve our implementation's resilience in the face of erroneous or malicious inputs, hardware or software faults, and
+unexpected environment changes. This would be advantageous both to the developers as well as the end-users of our implementation.
+
+\subsection{Test Suite}
+
+It would have been beneficial to set up a comprehensive test suite, which could rigorously test the modules within our implementation. Alternatively, we could have used a fuzzer to exercise the logic of our implementation. In the future, we can leverage static analysis techniques and a binary fuzzer, such as American Fuzzy Lop (AFL), to discover any bugs or vulnerabilities in our code.
 
 \section{Summary}
 
@@ -198,8 +235,35 @@ Kocher also discovered another side-channel attack by measuring the amount of po
 
 \section{Crypto Coding Practices}
 
+\begin{enumerate}
+    \item We learned how to use a cryptographically secure pseudorandom number generator and that even this has inherent disadvantages.
+
+    \item We learned how to prevent the elementary common modulus attack.
+
+    \item We learned how to prevent low private exponent attacks and that the security of our implementation can be improved further by choosing a larger public exponent.
+
+    \item We learned how to prevent low public exponent attacks and that the security of our implementation can be improved further by choosing a larger public exponent.
+
+    \item We learned how to prevent partial key exposure attacks and that our implementation is lacking in privacy provisions for the private exponent $d$.
+
+    \item We learned that our implementation is not immune to timing attacks and power consumption attacks and that precluding these attacks is difficult.
+\end{enumerate}
+
 \section{Secure Coding Practices}
 
+\begin{enumerate}
+    \item We learned the importance of freeing dynamically allocated memory, especially in a cryptographic setting where unfreed memory can contain sensitive data.
+        
+    \item We learned to correctly size memory allocation for an object; using GMP Library for most instances greatly reduces developer errors.
+
+    \item We learned the importance of converting {\tt char} data types to {\tt unsigned char} data types whenever it is being passed to a character-handling function.
+
+    \item We learned retrospectively that consistent and comphrehensive error handling would have made the development effort much easier.
+
+    \item We would have liked to create a comprehensive test suite that could ensure correctness through future iterations of our implementation. This would have been tremendously helpful during the development process.
+
+    \item It would be interesting to leverage static analysis techniques and a binary fuzzer, such as AFL, to discover any unintended behavior in our implementation.
+\end{enumerate}
 \end{document}
 
 
