@@ -63,6 +63,30 @@ void gen_e(mpz_t e) {
     mpz_set_ui(e, e_int);
 }
 
+void gen_d(mpz_t d, mpz_t p_minus_1, mpz_t q_minus_1, mpz_t e, int n) {
+
+    unsigned long int one = 1;
+    mpz_t lower_bound, upper_bound, base;
+    mpz_init(lower_bound); mpz_init(upper_bound); mpz_init_set_str(base, "2", 10);
+    mpz_pow_ui(lower_bound, base, n/2);
+    mpz_lcm(upper_bound, p_minus_1, q_minus_1);
+
+    mpz_invert(d, e, upper_bound);
+    if (mpz_cmp(d, lower_bound) < 0 || mpz_cmp(d, upper_bound) > 0) {
+        fprintf(stderr, "Private exponent d too small, try again\m");
+        exit(-1);
+    }
+
+    mpz_t ed, check_d;
+    mpz_init(ed); mpz_init(check_d);
+    
+    mpz_mul(ed, e, d);
+    mpz_mod(check_d, ed, upper_bound);
+
+    assert(mpz_cmp_ui(check_d, one) == 0);
+ 
+}
+
 void gen_probable_prime(mpz_t p, mpz_t p1, mpz_t p2, mpz_t e, int n) {
 
     // Step 1: Check if p1 and p2 are coprime
@@ -73,7 +97,7 @@ void gen_probable_prime(mpz_t p, mpz_t p1, mpz_t p2, mpz_t e, int n) {
     mpz_mul_ui(twop1, p1, two);
     mpz_gcd(gcd, twop1, p2);
     if (mpz_cmp_ui(gcd, one) != 0) {
-        fprintf(stderr, "Auxiliaries p1 and p2 not coprime");
+        fprintf(stderr, "Auxiliaries p1 and p2 not coprime\n");
         exit(-1);
     }
     
@@ -180,7 +204,6 @@ void gen_probable_prime(mpz_t p, mpz_t p1, mpz_t p2, mpz_t e, int n) {
     mpf_clear(f_lb); mpf_clear(f_sqrt); mpf_clear(f_base);
 }
 
-
 void gen_primes(mpz_t p, mpz_t e, int n) {
     if (n != 1024 && n != 2048 && n != 3072) {
         fprintf(stderr, "Invalid bit length for RSA modulus. Exiting...\n");
@@ -199,7 +222,7 @@ void gen_primes(mpz_t p, mpz_t e, int n) {
     while (mpz_probab_prime_p(xp2, 28) != 1) {
         mpz_add_ui(xp2, xp2, two);
     }
-    gmp_printf("%s\n%Zd\n%Zd\n", "Auxiliary primes for p: ", xp1, xp2);
+    //gmp_printf("%s\n%Zd\n%Zd\n", "Auxiliary primes for p: ", xp1, xp2);
     mpz_set(p1, xp1);
     mpz_set(p2, xp2);
 
@@ -207,82 +230,74 @@ void gen_primes(mpz_t p, mpz_t e, int n) {
     mpz_clear(xp); mpz_clear(xp1); mpz_clear(xp2); mpz_clear(p1); mpz_clear(p2); 
 }
 
-// Determine whether n is prime. Return 2 is definitely prime, 1 if probably prime, 0 if non-prime.
-// Uses Miller-Rabin primality tests. Use reps between 15-50.
-int mpz_probab_prime_p(const mpz_t n, int reps);
+int coprime(mpz_t a, mpz_t b) {
+    int coprime = 1;
+    mpz_t gcd; mpz_init(gcd);
+    mpz_t one; mpz_init_set_str(one, "1", 10);
 
-// Generate RSA modulus using two odd primes for now. Miller Rabin only set to 15. Specify number of bits
-// Also, this is deterministic at the moment. Will change later...
-/*
-void gen_modulus(mpz_t n, mpz_t r1, mpz_t r2, int bits) {
-    printf("%s\n", "Generating primes...");
-    gmp_randstate_t t;
-    gmp_randinit_mt(t);
-
-    while (mpz_probab_prime_p(r1, 15) != 2) {
-        mpz_rrandomb(r1, t, bits/2);
+    mpz_gcd(gcd, a, b);
+    if (mpz_cmp(gcd, one) != 0) {
+        coprime = 0;
     }
-    while (mpz_probab_prime_p(r2, 15) != 2) {
-        mpz_rrandomb(r2, t, bits/2);
-    }
-
-    mpz_mul(n, r1, r2);
-
-    gmp_printf("%s%Zd\n", "RSA modulus: ", n);
+    mpz_clear(gcd); mpz_clear(one);
+    return coprime;
 }
-
-void gen_e(mpz_t e, mpz_t n, mpz_t r1, mpz_t r2) {
-    // r1m1 stands for r1-1, etc.
-    printf("%s\n", "Generating public exponent e...");
-    mpz_t lambda, gcd, one, r1m1, r2m1, nm1;
-    mpz_init(lambda); mpz_init(gcd); mpz_init(one); mpz_init(r1m1); mpz_init(r2m1); mpz_init(nm1);
-
-    unsigned long int uno = 1;
-    mpz_set_ui(one, uno);
-    mpz_sub(r1m1, r1, one);
-    mpz_sub(r2m1, r1, one);
-    mpz_sub(nm1, n, one);
-    mpz_lcm(lambda, r1m1, r2m1);
-
-    gmp_randstate_t t;
-    gmp_randinit_mt(t);
-    while (mpz_cmp(gcd, one) != 0) {
-        mpz_urandomm(e, t, nm1); // This generates random numbers between 0 and n-1. We want between 3 and n-1. Knock on wood.
-        mpz_gcd(gcd, e, lambda);
-    }
-   
-    gmp_printf("%s%Zd\n", "Public exponent e: ", e);
-}
-*/
-
-// Generate random number w/ bitlength n
-void mpz_rrandomb(mpz_t rop, gmp_randstate_t state, mp_bitcnt_t n);
-
-// Sets rop to GCD of op1 and op2
-void mpz_gcd(mpz_t rop, const mpz_t op1, const mpz_t op2);
 
 int main() {		
 	struct RSAPublicKey pubK;
 	struct RSAPrivateKey privK;
+    mpz_init(pubK.modulus); mpz_init(pubK.publicExponent);
+    mpz_init(privK.modulus); mpz_init(privK.privateExponent);
 	mpz_t mod, e, d, m, c, p, q;
     mpz_init(mod); mpz_init(e); mpz_init(d); mpz_init(p); mpz_init(q);
 	mpz_init(m); mpz_init(c);
     
+    /*
+     * Key generation
+     */
+
+    // Generate public exponent e
     gen_e(e);
-    gmp_printf("%s%Zd\n", "The public exponent e is: ", e);
-    PRNG(p, 16);
+    gmp_printf("%s%Zd\n\n", "Public exponent e: ", e);
+
+    // Generate primes p and q for modulus n
     gen_primes(p, e, 1024);
     gen_primes(q, e, 1024);
-    gmp_printf("%s%Zd\n", "Generated prime p: ", p);
-    gmp_printf("%s%Zd\n", "Generated prime q: ", q);
-    //gen_modulus(mod, r1, r2, 40);
-    //gen_e(e, mod, r1, r2);
 
+    // Check if (p-1) and (q-1) are coprime with e
+    unsigned long int one = 1;
+    mpz_t p_minus_1, q_minus_1;
+    mpz_init(p_minus_1); mpz_init(q_minus_1);
+    mpz_sub_ui(p_minus_1, p, one);
+    mpz_sub_ui(q_minus_1, q, one);
+
+    assert(coprime(p_minus_1, e) == 1);
+    assert(coprime(q_minus_1, e) == 1);
+
+    gmp_printf("%s%Zd\n\n", "Prime p: ", p);
+    gmp_printf("%s%Zd\n\n", "Prime q: ", q);
+
+    mpz_mul(mod, p, q);
+
+    gmp_printf("%s%Zd\n\n", "Modulus n: ", mod);
+
+    // Generate private exponent d
+    gen_d(d, p_minus_1, q_minus_1, e, 1024);
+    
+    gmp_printf("%s%Zd\n\n", "Private exponent d: ", d);
+
+    mpz_set(pubK.modulus, mod);
+    mpz_set(pubK.publicExponent, e);
+
+    mpz_set(privK.modulus, mod);
+    mpz_set(privK.privateExponent, d);
+
+    /*
 	OS2IP("8c 69 50", mod);
 	mpz_set(pubK.modulus, mod);
 	mpz_set(privK.modulus, mod);
 	mpz_set_str(pubK.publicExponent, "01 00 01", 16);
-
+    */
     gmp_printf("%Zd\n", pubK.modulus);
 
 	//RSAEP(&pubK, m, c);
