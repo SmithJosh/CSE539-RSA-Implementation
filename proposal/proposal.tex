@@ -31,6 +31,12 @@ Even before starting the implementation of PKCS $\#1$~\cite{rsa2012pkcs} itself,
 
 To gain experience working with arbitrary precision integers, we initially attempted to create the BigInteger library ourselves. Three primary design decisions guided the process. First of all, to make memory usage efficient, we used dynamically-sized integers. This allowed integers to occupy only the memory they required, and freed up any they didn't. It also had the additional benefit of placing no limit on the capacity of a BigInteger. Secondly, intending to replicate the behavior of primitive C data types, we did not use in-place operations on BigIntegers. That is, the output of any BigInteger operation was a newly allocated BigInteger, and the operands were unchanged. Finally, we decided not to represent negative integers. This is sufficient for RSA, and had the advantage of simplicity.
 
+The dynamic sizing ultimately proved to be very cumbersome to work with. For most operations, it wasn't possible to predict the number of bytes of storage that would be needed until after the result was computed. This resulted in excessive memory management (for example, reallocating memory after the operation to fit the size of the result) and significant performance overhead. It would have been better to assign a maximum size for a multi-precision integer, allocate a fixed block of that size, and let it grow or shrink as needed. Although this is a less efficient use of memory, the lack of overhead for managing memory would have cleaned up the code and increase performance significantly.
+
+Likewise, avoiding in-place operations proved to be an inconvenience. On several occasions, it would have been more convenient to write back the result of an operation to one of the operands (for example, to use immediately afterword). But our library did not support this, so we were forced to allocate a new integer whether or not it wasn't necessary. This again resulted in unnecessary overhead due to memory management, and made the library more difficult to use.
+
+
+
 In the end, our custom solution was quite inefficient, and fixing all its issues would have likely required a complete redesign. Thus, we decided instead to incorporate a preexisting library to handle multiple-precision integers. For this purpose, we settled on GMP (the GNU Multi-Precision library)~\cite{gmpmultiple}.
 
 \subsection{Key Pair Generation}
@@ -142,19 +148,28 @@ Implementing constraints for the private exponent $d$ is relatively straightforw
 
 \subsection{Encryption and Decryption}
 
-We follow the PKCS $\#1$ v2.2 RSA Cryptography Standard~\cite{rsa2012pkcs} developed by RSA Laboratories to implement the encryption and decryption functions.
+The PKCS {\#1} standard outlines two difference schemes for RSA encryption – RSAES-OAEP and RSAES-PKCS1-v1\_5. The former is required for new applications, and the latter is an older scheme kept around for backwards compatibility. For our project, we chose to implement the OAEP scheme. As indicated by its name, this scheme incorporates OAEP (Optimal Asymmetric Encryption Padding) which turns the otherwise deterministic RSA encryption into probabilistic encryption. This makes the scheme CPA-secure.
 
 \subsection{Data Primitives}
+As specified in the standard, there are two primary data types used for RSA encryption – octet strings and multiple-precision integers. Octet strings are used to represent messages (i.e.\ plaintext and ciphertext) and the multiple-precision integers are used to perform the basic mathematical operations of the RSA scheme (i.e.\ exponentiation). To convert between the two, the standard specifies two data conversion primitives – I2OSP (Integer to Octet String) and OS2IP (Octet String to Integer). To represent the multiple-precision integers, we already decided on the GMP library. However, there were a couple options for how to represent the octet strings.
 
-As part of the PKCS specification, we implement the two cryptographic primitives, I2OSP and OS2IP, from scratch. I2OSP converts a nonnegative integer $x$ into a zero-padded octet string of length $xLen$. OS2IP converts an octet string back to an integer.
+\begin{enumerate}
+    \item Represent each octet as a single character: this is the most efficient way of representing octets, since each character can be any one of its possible 256 values. However, with this representation, string manipulation of octet strings became a challenge. Since ‘\\0' is a valid octet, a NULL character cannot be used to represent the end of an octet string. This would require storing the length of the octet string separately. 
+
+    \item Represent each octet as two hex characters: this method is less efficient, as it requires two characters for each octet. But it allows for NULL-terminated octet strings, which is the standard way of representing strings in C. Furthermore, the GMP library has little support for base-256 octet strings, so this is the option we chose.
+\end{enumerate}
 
 \subsection{Cryptographic Primitives}
 
-The two cryptographic primitives are RSAEP, which is the encryption primitive, and RSADP, which is the decryption primitive. We implement these as prescribed in the specification, adapting the GMP Library.
+The two cryptographic primitives are RSAEP, which is the encryption primitive, and RSADP, which is the decryption primitive. We implement these as prescribed in the specification, adapting the GMP Library. 
 
 \subsection{RSAES-OAEP}
 
-RSAES-OAEP combines both of the cryptographic primitives aforementioned, and uses an encoding method based on Bellare and Rogaway's Optimal Assymetric Encryption Scheme~\cite{bellare1994optimal}. RSAES-OAEP is parameterized by a hash function and mask generation function that we describe further in Section~\cite{sec:hash}. Both the RSAES-OAEP-Encryption and RSAES-OAEP-Decryption operations are implemented as prescribed in the PKCS specification.
+RSAES-OAEP combines both of the cryptographic primitives aforementioned, and uses an encoding method based on Bellare and Rogaway's Optimal Assymetric Encryption Scheme~\cite{bellare1994optimal}. RSAES-OAEP is parameterized by a hash function and mask generation function that we describe further in Section~\ref{sec:hash}. Both the RSAES-OAEP-Encryption and RSAES-OAEP-Decryption operations are implemented as prescribed in the PKCS specification.
+
+To accomplish the OAEP padding, the RSA-OAEP scheme makes use of a Mask Generation Function, which in turn is based on a secure hash. The PKCS \#1 standard recommends the use of a hashing algorithm from the SHA-2 hash family, but does not require any hash algorithm in particular. For our project, we decided to use the SHA-256 hash algorithm. Since the algorithm is not given in the standard, we used the implementation from the OpenSSL library.
+
+The representation of octets as pairs of hex characters worked fairly well, but there were some issues it caused. In particular, the OpenSSL SHA256 hash function uses outputs a base-256 octet string, which was not compatible with our octet string representation. Consequently, we had to convert back and forth between these formats, decreasing the performance of our implementation. It would have been better to have a single common format for octet strings. The simplest way to do this would probably have been to store the length of an octet string along with the data and represent all octet strings in base-256.
 
 
 \subsection{Hash and Mask Generation}\label{sec:hash}
@@ -234,10 +249,6 @@ Since memory owned by our process can be accessed and reused by another process 
 In this regard, we free dynamically allocated memory whenever it is no longer needed. This occurs throughout our implementation in two fashions. First, consider when a new block of memory is allocated using {\tt malloc}. Once the allocated block of memory is no longer in use, memory is freed using the function call {\tt free}. Second, when using the GMP Library to instantiate multiple precision numbers, these numbers are also dynamically allocated. Thus, this memory must
 either be freed using the function call {\tt mpz\_clear} (for integers) or ``zeroized'' to ensure that no information about the secret keys are revealed.
 
-The dynamic sizing ultimately proved to be very cumbersome to work with. For most operations, it wasn't possible to predict the number of bytes of storage that would be needed until after the result was computed. This resulted in excessive memory management (for example, reallocating memory after the operation to fit the size of the result) and significant performance overhead. It would have been better to assign a maximum size for a multi-precision integer, allocate a fixed block of that size, and let it grow or shrink as needed. Although this is a less efficient use of memory, the lack of overhead for managing memory would have cleaned up the code and increase performance significantly.
-
-Likewise, avoiding in-place operations proved to be an inconvenience. On several occasions, it would have been more convenient to write back the result of an operation to one of the operands (for example, to use immediately afterword). But our library did not support this, so we were forced to allocate a new integer whether or not it wasn't necessary. This again resulted in unnecessary overhead due to memory management, and made the library more difficult to use.
-
 \subsection{Characters and Strings}
 
 One secure coding practice that we should have considered is to cast characters to {\tt unsigned char} before converting them to larger integer sizes. One instance of this is when generating pseudorandom numbers from {\tt /dev/random}, since we sample random characters from this file and then convert it to a pseudorandom multiple precision integer. More broadly, any arguments to character-handling functions should be represented as an {\tt unsigned char}.
@@ -255,7 +266,7 @@ It would have been beneficial to set up a comprehensive test suite, which could 
 \section{Summary}
 
 Taken as a whole, this project illuminated many of the intricacies involved in a real-world implementation of the RSA cryptosystem, and cryptosystems more broadly. Truly, what we learn as ``textbook'' RSA is a tremendous oversimplification to what RSA is in practice. As expected, the learning outcomes from this project were innumerable as we were confronted with both number theoretic attacks, as well as implementation attacks. In regards to secure coding practices, perhaps the most
-important learning outcome was realizing that the vast space of considerations makes cryptographic coding especially difficult
+important learning outcome was realizing that the vast space of considerations makes cryptographic coding especially difficult, and mistakes devastating for the security of the cryptosystem. This project skimmed the surface of an RSA implementation, and it will be interesting future work to improve upon cryptographic coding practices, general coding practices, and performance.
 
 \bibliography{proposal}
 \bibliographystyle{unsrt}
