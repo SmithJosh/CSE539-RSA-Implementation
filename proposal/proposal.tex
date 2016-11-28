@@ -17,13 +17,21 @@
 \section{Introduction}
 The RSA cryptosystem is one of the most widely used public-key cryptosystems in use today for securing information. Fundamentally, it allows two parties to exchange a secret message who have never communicated in the past. To accomplish this, RSA utilizes a pair of keys, a public key for encryption and a private key for decryption. The encryption and decryption keys are distinct, and so RSA is often referred to as an asymmetric cryptosystem.
 
-For this project, we propose to study the RSA cryptosystem to understand how and why it works. As one of the most mature cryptosystems, RSA has been studied extensively, and there are plenty of interesting resources on attacks and how to prevent them~\cite{boneh1999twenty}. These attacks provide an excellent exposition for the dangers of improperly implementing RSA, which makes such a project well-suited for learning.
+For this project, we studied the RSA cryptosystem to understand how and why it works. As one of the most mature cryptosystems, RSA has been studied extensively, and there are plenty of interesting resources on attacks and how to prevent them~\cite{boneh1999twenty}. These attacks provide an excellent exposition for the dangers of improperly implementing RSA, which makes such a project well-suited for learning.
 
-We will focus on the number theory behind the algorithm, well-known attacks on the RSA cryptosysem, and secure coding practices associated with implementing cryptosystems more broadly. Our ultimate goal is to implement the RSA encryption and decryption algorithms according to cryptographic considerations for security and performance, which we hope will provide a better understanding of the nuances of cryptographic coding in practice.
+We focused on the number theory behind the algorithm, well-known attacks on the RSA cryptosysem, and secure coding practices associated with implementing cryptosystems more broadly. We implemented the RSA encryption and decryption algorithms according to cryptographic considerations for security and performance and according the well-established specifications. This provided a better understanding of the nuances of cryptographic coding in practice.
 
 \section{Implementation}
 
-We first detail our implementation of RSA key generation, and then detail our implementation of encryption and decryption.
+We first detail how we handle multiple precision numbers, then we detail our implementation of RSA key generation and encryption and decryption functions.
+
+\subsection{Handling Multiple Precision Numbers}
+
+Even before starting the implementation of PKCS $\#1$~\cite{rsa2012pkcs} itself, the first major challenge we faced was deciding how to store the numbers that would be used for encryption. Typical RSA integers are on the order of 1000 bits in size, which far exceeds the capacity of standard C data types. Thus, some custom BigInteger data type was necessary to store integers of arbitrary precision. Though less of a security concern, this was nonetheless a fundamental part of implementing the encryption scheme.
+
+To gain experience working with arbitrary precision integers, we initially attempted to create the BigInteger library ourselves. Three primary design decisions guided the process. First of all, to make memory usage efficient, we used dynamically-sized integers. This allowed integers to occupy only the memory they required, and freed up any they didn't. It also had the additional benefit of placing no limit on the capacity of a BigInteger. Secondly, intending to replicate the behavior of primitive C data types, we did not use in-place operations on BigIntegers. That is, the output of any BigInteger operation was a newly allocated BigInteger, and the operands were unchanged. Finally, we decided not to represent negative integers. This is sufficient for RSA, and had the advantage of simplicity.
+
+In the end, our custom solution was quite inefficient, and fixing all its issues would have likely required a complete redesign. Thus, we decided instead to incorporate a preexisting library to handle multiple-precision integers. For this purpose, we settled on GMP (the GNU Multi-Precision library)~\cite{gmpmultiple}.
 
 \subsection{Key Pair Generation}
 
@@ -134,6 +142,27 @@ Implementing constraints for the private exponent $d$ is relatively straightforw
 
 \subsection{Encryption and Decryption}
 
+We follow the PKCS $\#1$ v2.2 RSA Cryptography Standard~\cite{rsa2012pkcs} developed by RSA Laboratories to implement the encryption and decryption functions.
+
+\subsection{Data Primitives}
+
+As part of the PKCS specification, we implement the two cryptographic primitives, I2OSP and OS2IP, from scratch. I2OSP converts a nonnegative integer $x$ into a zero-padded octet string of length $xLen$. OS2IP converts an octet string back to an integer.
+
+\subsection{Cryptographic Primitives}
+
+The two cryptographic primitives are RSAEP, which is the encryption primitive, and RSADP, which is the decryption primitive. We implement these as prescribed in the specification, adapting the GMP Library.
+
+\subsection{RSAES-OAEP}
+
+RSAES-OAEP combines both of the cryptographic primitives aforementioned, and uses an encoding method based on Bellare and Rogaway's Optimal Assymetric Encryption Scheme~\cite{bellare1994optimal}. RSAES-OAEP is parameterized by a hash function and mask generation function that we describe further in Section~\cite{sec:hash}. Both the RSAES-OAEP-Encryption and RSAES-OAEP-Decryption operations are implemented as prescribed in the PKCS specification.
+
+
+\subsection{Hash and Mask Generation}\label{sec:hash}
+
+While there are numerous acceptable hash functions, SHA-512 and SHA-256 are recommended.
+Thus, erring for performance, we choose to use the OpenSSL SHA-256 implementation. The Mask Generation Function (MGF) is crucial for the security of the RSA encryption scheme as specified. 
+The MGF takes an octet string of varying length, and then outputs a pseudorandom octet string of a desired length. This means that the output cannot be predicted, and the provable securtiy of RSAES-OAEP relies on the MGF's randomness.
+
 \section{Crypto Learning}
 
 Here, we overview a number of strengths and weaknesses of our RSA implementation. In particular, we discuss attacks that we do protect against, and attacks that would cause our implementation to fail.
@@ -180,6 +209,7 @@ The first is to introduce a delay so that decryption (modular exponentiation, in
 
 Kocher also discovered another side-channel attack by measuring the amount of power consumed during decryption. Since multiprecision multiplication causes greater power consumption, it is simple to detect the number of multiplications, thereby revealing information about the private exponent $d$. 
 
+Another security concern we encountered when implementing the BigInteger library was a potential timing attack when performing modular exponentiation. The larger the encryption exponent, the long a na\"{i}ve implementation will take, and this leaks information about the length of the encryption exponent if an attacker can observe the time it takes to perform the exponentiation. For exponentiation using Montgomery multiplication, there is a modification called Montgomery’s Ladder which is used to make exponentiation run in constant time. We did not implement this modification, but it would be interesting to do so in the future.
 \section{Secure Coding}
 
 We next overview secure coding practices that we considered for our implementation, as well as practices that could have further improved our code. These are mostly based on the SEI CERT C Coding Standard~\cite{seacord2008cert}.
@@ -204,7 +234,9 @@ Since memory owned by our process can be accessed and reused by another process 
 In this regard, we free dynamically allocated memory whenever it is no longer needed. This occurs throughout our implementation in two fashions. First, consider when a new block of memory is allocated using {\tt malloc}. Once the allocated block of memory is no longer in use, memory is freed using the function call {\tt free}. Second, when using the GMP Library to instantiate multiple precision numbers, these numbers are also dynamically allocated. Thus, this memory must
 either be freed using the function call {\tt mpz\_clear} (for integers) or ``zeroized'' to ensure that no information about the secret keys are revealed.
 
-Another aspect of memory management we consider is allocating sufficient memory for an object. In {\tt malloc} calls, we consistently and correctly use {\tt sizeof} to size the memory allocation. For initializing multiple precision numbers, this is done automatically. 
+The dynamic sizing ultimately proved to be very cumbersome to work with. For most operations, it wasn't possible to predict the number of bytes of storage that would be needed until after the result was computed. This resulted in excessive memory management (for example, reallocating memory after the operation to fit the size of the result) and significant performance overhead. It would have been better to assign a maximum size for a multi-precision integer, allocate a fixed block of that size, and let it grow or shrink as needed. Although this is a less efficient use of memory, the lack of overhead for managing memory would have cleaned up the code and increase performance significantly.
+
+Likewise, avoiding in-place operations proved to be an inconvenience. On several occasions, it would have been more convenient to write back the result of an operation to one of the operands (for example, to use immediately afterword). But our library did not support this, so we were forced to allocate a new integer whether or not it wasn't necessary. This again resulted in unnecessary overhead due to memory management, and made the library more difficult to use.
 
 \subsection{Characters and Strings}
 
@@ -222,6 +254,9 @@ It would have been beneficial to set up a comprehensive test suite, which could 
 
 \section{Summary}
 
+Taken as a whole, this project illuminated many of the intricacies involved in a real-world implementation of the RSA cryptosystem, and cryptosystems more broadly. Truly, what we learn as ``textbook'' RSA is a tremendous oversimplification to what RSA is in practice. As expected, the learning outcomes from this project were innumerable as we were confronted with both number theoretic attacks, as well as implementation attacks. In regards to secure coding practices, perhaps the most
+important learning outcome was realizing that the vast space of considerations makes cryptographic coding especially difficult
+
 \bibliography{proposal}
 \bibliographystyle{unsrt}
 
@@ -232,6 +267,9 @@ It would have been beneficial to set up a comprehensive test suite, which could 
 \lstinputlisting[language=C, numbers=left, breaklines=true, basicstyle=\ttfamily\footnotesize, captionpos=t, caption={Code for {\tt rsa.h}.}]{../src/rsa.h}
 
 \lstinputlisting[language=C, numbers=left, breaklines=true, basicstyle=\ttfamily\footnotesize, captionpos=t, caption={Code for {\tt rsa.c}.}]{../src/rsa.c}
+
+\lstinputlisting[language=C, numbers=left, breaklines=true, basicstyle=\ttfamily\footnotesize, captionpos=t, caption={Code for {\tt test.c}.}]{../src/test.c}
+
 
 \section{Crypto Coding Practices}
 
