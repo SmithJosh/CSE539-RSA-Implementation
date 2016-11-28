@@ -270,8 +270,8 @@ char *RSA_OAEP_DECRYPT(struct RSAPrivateKey *K, char* C, char *L) {
 	return M;
 }
 
+// Generates pseudorandom n bits from /dev/random file 
 void PRNG(mpz_t rand, int n) {
-
     int devrandom = open("/dev/random", O_RDONLY);
     char randbits[n/8];
     size_t randlen = 0;
@@ -292,12 +292,14 @@ void PRNG(mpz_t rand, int n) {
     }
 }
 
+// Generate (constant) public exponent e
 void gen_e(mpz_t e) {
     // Set e to 2^16 + 1
     unsigned long int e_int = pow(2,16)+1;
     mpz_set_ui(e, e_int);
 }
 
+// Generate private exponent d
 void gen_d(mpz_t d, mpz_t p_minus_1, mpz_t q_minus_1, mpz_t e, int n) {
 
     unsigned long int one = 1;
@@ -322,6 +324,7 @@ void gen_d(mpz_t d, mpz_t p_minus_1, mpz_t q_minus_1, mpz_t e, int n) {
  
 }
 
+// Generate probable prime from auxiliary primes
 void gen_probable_prime(mpz_t p, mpz_t p1, mpz_t p2, mpz_t e, int n) {
 
     // Step 1: Check if p1 and p2 are coprime
@@ -378,7 +381,6 @@ void gen_probable_prime(mpz_t p, mpz_t p1, mpz_t p2, mpz_t e, int n) {
     mpz_set_f(lower_bound, f_lb);
 
     
-    // Step 6: Check condition for Y > cond
     mpz_t cond;
     mpz_init(cond);
     mpz_pow_ui(cond, base, n/2);
@@ -402,10 +404,12 @@ void gen_probable_prime(mpz_t p, mpz_t p1, mpz_t p2, mpz_t e, int n) {
         mpz_mod(Y, Y, temp);
         mpz_add(Y, Y, X);
 
+        // Step 5: i = 0
         i = 0;
 
         mpz_gcd(gcd, Y_minus_1, e);
 
+        // Step 11: Go to Step 6
         while (mpz_cmp(Y, cond) < 0) {
             i += 1;
             if (mpz_cmp_ui(gcd, one) != 0) {
@@ -416,19 +420,25 @@ void gen_probable_prime(mpz_t p, mpz_t p1, mpz_t p2, mpz_t e, int n) {
                 mpz_add(Y, Y, temp);
                 mpz_gcd(gcd, Y_minus_1, e);
             }
+            // Step 7: If GCD(Y-1, e) = 1
             else {
                 if (mpz_probab_prime_p(Y, 28) >= 1) {
                     mpz_set(p, Y);
                     return;
                 }
+
+                //Step 8: Check if failure
                 if (i >= 5*(n/2)) {
                     printf("%s\n", "FAILURE");
                     exit(-1);
                 }
+
+                //Step 10: Update Y
                 mpz_add(Y, Y, temp);
                 mpz_gcd(gcd, Y_minus_1, e);
             }
         }
+    // Step 6: Check condition for Y > cond
     } while (mpz_cmp(Y, cond) >= 0);
 
     mpz_clear(gcd); mpz_clear(twop1); mpz_clear(R); mpz_clear(R1); mpz_clear(R2); 
@@ -439,7 +449,9 @@ void gen_probable_prime(mpz_t p, mpz_t p1, mpz_t p2, mpz_t e, int n) {
     mpf_clear(f_lb); mpf_clear(f_sqrt); mpf_clear(f_base);
 }
 
-void gen_primes(mpz_t p, mpz_t e, int n) {
+
+// Generate auxiliary primes
+void gen_auxiliary_primes(mpz_t p, mpz_t e, int n) {
     if (n != 1024 && n != 2048 && n != 3072) {
         fprintf(stderr, "Invalid bit length for RSA modulus. Exiting...\n");
         exit(-1);
@@ -480,6 +492,7 @@ void gen_primes(mpz_t p, mpz_t e, int n) {
     mpz_clear(xp); mpz_clear(xp1); mpz_clear(xp2); mpz_clear(p1); mpz_clear(p2); 
 }
 
+// Check if gcd(a,b) = 1 (coprime)
 int coprime(mpz_t a, mpz_t b) {
     int coprime = 1;
     mpz_t gcd; mpz_init(gcd);
@@ -511,8 +524,8 @@ int main() {
     gmp_printf("%s%Zd\n\n", "Public exponent e: ", e);
 
     // Generate primes p and q for modulus n
-    gen_primes(p, e, 1024);
-    gen_primes(q, e, 1024);
+    gen_auxiliary_primes(p, e, 1024);
+    gen_auxiliary_primes(q, e, 1024);
 
     // Check if (p-1) and (q-1) are coprime with e
     unsigned long int one = 1;
