@@ -3,6 +3,7 @@
 % Last Change: Mon Sep 26 12:00 AM 2016 M
 %
 \documentclass[a4paper]{article}
+\usepackage{listings}
 
 \title{RSA Encryption and Decryption}
 \author{Kevin Liao and Josh Smith}
@@ -14,12 +15,19 @@
 \maketitle
 
 \section{Introduction}
-Intro goes here.
-\section{Key Pair Generation}
+The RSA cryptosystem is one of the most widely used public-key cryptosystems in use today for securing information. Fundamentally, it allows two parties to exchange a secret message who have never communicated in the past. To accomplish this, RSA utilizes a pair of keys, a public key for encryption and a private key for decryption. The encryption and decryption keys are distinct, and so RSA is often referred to as an asymmetric cryptosystem.
 
-We follow the FIPS Digital Signature Standard~\cite{fips2013186} to generate key pairs.
+For this project, we propose to study the RSA cryptosystem to understand how and why it works. As one of the most mature cryptosystems, RSA has been studied extensively, and there are plenty of interesting resources on attacks and how to prevent them. These attacks provide an excellent exposition for the dangers of improperly implementing RSA, which makes such a project well-suited for learning.
 
-\subsection{Preliminaries}
+We will focus on the number theory behind the algorithm, well-known attacks on the RSA cryptosysem, and secure coding practices associated with implementing cryptosystems more broadly. Our ultimate goal is to implement the RSA encryption and decryption algorithms according to cryptographic considerations for security and performance, which we hope will provide a better understanding of the nuances of cryptographic coding in practice.
+
+\section{Implementation}
+
+We first detail our implementation of RSA key generation, and then detail our implementation of encryption and decryption.
+
+\subsection{Key Pair Generation}
+
+We follow the Digital Signature Standard (DSS)~\cite{fips2013186} issued by the National Institute of Standards and Technology (NIST) to generate key pairs.
 
 \subsubsection{Pseudorandom Number Generator}
 In order to generate random primes, it is important that we use a cryptographically secure pseudorandom number generator. We decide to use the UNIX-based special file {\tt /dev/random}, which generates high-quality pseudorandom numbers that are well-suited for key generation.
@@ -29,12 +37,34 @@ The semantics for {\tt /dev/random} vary based on the operating system. In Linux
 We believe {\tt /dev/random}, as prescribed, is sufficient for our purposes, but the entropy pool can be further improved using specialized programs or hardware random number generators.
 
 \subsubsection{Primality Testing}
-\subsection{Criteria for Key Pairs}
 
-The key pair for RSA consists of the public key $(n, e)$ and the private key $(n, d)$. The RSA modulus $n$ is the product of two distinct prime numbers $p$ and $q$. RSA's security rests on the primality and secrecy of $p$ and $q$, as well as the secrecy of the private exponent $d$. The methodology for generating these parameters varies based on the desired number of bits of security and the desired quality of primes. However, the following desideratum must hold true for all methods.
+We use the Miller-Rabin probabilistic primality test to validate the generation of prime numbers. There are two approaches for using Miller-Rabin primality testing: (1) using several iterations of Miller-Rabin alone; (2) using several iterations of Miller-Rabin followed by a Lucas primality test. For simplicity, we use the iterative Miller-Rabin implementation available in the GNU MP Library. Instead, we find it more interesting to learn how to use Miller-Rabin testing correctly
+in practice, as specified in the DSS.
 
-\subsubsection{Public Exponent $e$}
+For example, different modulus lengths for RSA require varying rounds of Miller-Rabin testing. We reproduce the number of rounds necessary for various auxiliary prime (see Section~\ref{sec:keygen}) lengths in Table~\ref{tab:mr}, and we follow this in our implementation.
 
+\begin{table}[h]
+\centering
+\begin{tabular}{|c|c|} 
+ \hline
+ Auxiliary Prime Length & Rounds of M-R Testing  \\ \hline
+ $>100$ bits & 28 \\ 
+ $>140$ bits & 38 \\ 
+ $>170$ bits & 41 \\
+ \hline
+\end{tabular}
+\caption{The table shows the number of Miller-Rabin rounds necessary as a function of the lengths of auxiliary primes $p_1$, $p_2$, $q_1$, and $q_2$.}
+\label{tab:mr}
+\end{table}
+
+
+
+\subsubsection{Criteria for Key Pairs}\label{sec:keygen}
+
+The key pair for RSA consists of the public key $(n, e)$ and the private key $(n, d)$. The RSA modulus $n$ is the product of two distinct prime numbers $p$ and $q$. RSA's security rests on the primality and secrecy of $p$ and $q$, as well as the secrecy of the private exponent $d$. The methodology for generating these parameters varies based on the desired number of bits of security and the desired quality of primes. However, several desideratum must hold true for all
+methods.\newline
+
+\noindent \textbf{Public Exponent $e$.} The following constraints must hold true for the public exponent $e$.
 \begin{enumerate}
     \item The public verification exponent $e$ must be selected prior to generating the primes $p$ and $q$, and the private signature exponent $d$.
 
@@ -42,20 +72,89 @@ The key pair for RSA consists of the public key $(n, e)$ and the private key $(n
 
 \end{enumerate}
 
-It is immaterial whether or not $e$ is a fixed value or a random value, as long as it satisfies constraint 2 above. For simplicity, we fix $e = 2^{16} + 1 = 65537$.
+It is immaterial whether or not $e$ is a fixed value or a random value, as long as it satisfies constraint 2 above. For simplicity, we fix $e = 2^{16} + 1 = 65537$.\newline
 
-\subsection{Primes $p$ and $q$}
+\noindent \textbf{Primes $p$ and $q$.} The following constraints must hold true for random primes $p$ and $q$.
 
+\begin{enumerate}
+    \item Both $p$ and $q$ shall be either provable primes or probable primes.
 
-\subsection{Private exponent $d$}
-\section{Generation of Probable Primes with Conditions Based on Auxiliary Probable Primes}
+    \item Both $p$ and $q$ shall be randomly generated prime numbers such that all of the following subconstraints hold:
 
-Uhm.
+        \begin{itemize}
+            \item $(p+1)$ has a prime factor $p_1$
+            \item $(p-1)$ has a prime factor $p_2$
+            \item $(q+1)$ has a prime factor $q_1$
+            \item $(q-1)$ has a prime factor $q_2$
+        \end{itemize}
 
-\section{Encryption and Decryption}
+    where $p_1$, $p_2$, $q_1$, $q_2$ are auxiliary primes of $p$ and $q$. Then, one of the following shall also apply:
+
+    \begin{enumerate}
+        \item[(i)] $p_1$, $p_2$, $q_1$, $q_2$, $p$, and $q$ are all provable primes
+
+        \item[(ii)] $p_1$, $p_2$, $q_1$, $q_2$ are provable primes, and $p$ and $q$ are probable primes
+        \item[(iii)] $p_1$, $p_2$, $q_1$, $q_2$, $p$, and $q$ are all probable primes
+    \end{enumerate}
+\end{enumerate}
+
+For our implementation, we choose to generate probable primes $p$ and $q$ with conditions based on auxiliary probable primes $p_1$, $p_2$, $q_1$, and $q_2$. In other words, we choose the method (iii) listed above. While this method offers the lowest quality of primes, it offers the best performance. It would be interesting future work to benchmark key generation times and quality of primes among these three methods.
+
+Method (iii) supports key sizes of length 1024, 2048, and 3072, which offers more utility over method (i), which offers only key sizes of length 2048 and 3072. For different key sizes, various lengths of auxiliary primes must be satisfied, which is reproduced in Table~\ref{tab:aux_len}. Table~\ref{tab:aux_len} can be joined with Table~\ref{tab:mr} for a comprehensive view of parameters as a function of the key size $nlen$.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|c|c|} 
+ \hline
+ Key Size $(nlen)$ & Minimum Length of Auxiliary Primes\\ \hline
+ 1024 bits & $> 100$ bits \\ 
+ 2048 bits & $> 140$ bits \\ 
+ 3072 bits & $> 170$ bits \\
+ \hline
+\end{tabular}
+\caption{The table shows the minimum length of auxiliary primes $p_1$, $p_2$, $q_1$, and $q_2$ as a function of the key size $nlen$.}
+\label{tab:aux_len}
+\end{table}
+
+Regarding our actual implementation of method (iii), we closely follow the constraints above and how probable primes are generated from probable auxiliary primes as specified in the DSS~\cite{fips2013186}. There are further constraints to the above, which are specific to method (iii), that we satisfy but do not fully detail here. Howver, one important aspect of method (iii) is that it leverages the Chinese Remainder Theorem to improve performance for key generation.
+
+\noindent \textbf{Private exponent $d$.} The following constraints must hold true for the private exponent $d$.
+
+\begin{enumerate}
+    \item The private exponent $d$ must be a positive integer between
+
+        \begin{equation}
+            2^{nlen/2} < d < LCM(p-1,q-1).
+        \end{equation}
+
+    \item $1 \equiv (ed) \pmod{LCM(p-1,q-1)}$.
+\end{enumerate}
+
+Implementing constraints for the private exponent $d$ is relatively straightforward. However, we do note that in the rare case when $d \leq 2^{nlen/2}$, new primes must be generated.
+
+\subsection{Encryption and Decryption}
+
+\section{Crypto Learning}
+
+\section{Secure Coding}
+
+\section{Summary}
 
 \bibliography{proposal}
 \bibliographystyle{unsrt}
+
+\appendix
+
+\section{Code}
+
+\lstinputlisting[language=C, numbers=left, breaklines=true, basicstyle=\ttfamily\footnotesize, captionpos=t, caption={Code for {\tt rsa.h}.}]{../src/rsa.h}
+
+\lstinputlisting[language=C, numbers=left, breaklines=true, basicstyle=\ttfamily\footnotesize, captionpos=t, caption={Code for {\tt rsa.c}.}]{../src/rsa.c}
+
+\section{Crypto Coding Practices}
+
+\section{Secure Coding Practices}
+
 \end{document}
 
 
