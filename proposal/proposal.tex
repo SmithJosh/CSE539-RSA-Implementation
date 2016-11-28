@@ -17,7 +17,7 @@
 \section{Introduction}
 The RSA cryptosystem is one of the most widely used public-key cryptosystems in use today for securing information. Fundamentally, it allows two parties to exchange a secret message who have never communicated in the past. To accomplish this, RSA utilizes a pair of keys, a public key for encryption and a private key for decryption. The encryption and decryption keys are distinct, and so RSA is often referred to as an asymmetric cryptosystem.
 
-For this project, we propose to study the RSA cryptosystem to understand how and why it works. As one of the most mature cryptosystems, RSA has been studied extensively, and there are plenty of interesting resources on attacks and how to prevent them. These attacks provide an excellent exposition for the dangers of improperly implementing RSA, which makes such a project well-suited for learning.
+For this project, we propose to study the RSA cryptosystem to understand how and why it works. As one of the most mature cryptosystems, RSA has been studied extensively, and there are plenty of interesting resources on attacks and how to prevent them~\cite{boneh1999twenty}. These attacks provide an excellent exposition for the dangers of improperly implementing RSA, which makes such a project well-suited for learning.
 
 We will focus on the number theory behind the algorithm, well-known attacks on the RSA cryptosysem, and secure coding practices associated with implementing cryptosystems more broadly. Our ultimate goal is to implement the RSA encryption and decryption algorithms according to cryptographic considerations for security and performance, which we hope will provide a better understanding of the nuances of cryptographic coding in practice.
 
@@ -29,7 +29,7 @@ We first detail our implementation of RSA key generation, and then detail our im
 
 We follow the Digital Signature Standard (DSS)~\cite{fips2013186} issued by the National Institute of Standards and Technology (NIST) to generate key pairs.
 
-\subsubsection{Pseudorandom Number Generator}
+\subsubsection{Pseudorandom Number Generator}\label{sec:prng}
 In order to generate random primes, it is important that we use a cryptographically secure pseudorandom number generator. We decide to use the UNIX-based special file {\tt /dev/random}, which generates high-quality pseudorandom numbers that are well-suited for key generation.
 
 The semantics for {\tt /dev/random} vary based on the operating system. In Linux,  {\tt /dev/random} is generated from entropy created by keystrokes, mouse movements, IDE timings, and other kernel processes. In macOS, {\tt /dev/random} data is generated using the Yarrow-160 algorithm, which is a cryptographic pseudorandom number generator. Yarrow-160 outputs random bits using a combination of the SHA1 hash function and three-key triple-DES.
@@ -116,7 +116,7 @@ Method (iii) supports key sizes of length 1024, 2048, and 3072, which offers mor
 \label{tab:aux_len}
 \end{table}
 
-Regarding our actual implementation of method (iii), we closely follow the constraints above and how probable primes are generated from probable auxiliary primes as specified in the DSS~\cite{fips2013186}. There are further constraints to the above, which are specific to method (iii), that we satisfy but do not fully detail here. Howver, one important aspect of method (iii) is that it leverages the Chinese Remainder Theorem to improve performance for key generation.
+Regarding our actual implementation of method (iii), we closely follow the constraints above and how probable primes are generated from probable auxiliary primes as specified in the DSS~\cite{fips2013186}. There are further constraints to the above, which are specific to method (iii), that we satisfy but do not fully detail here. Howver, one important aspect of method (iii) is that it leverages the Chinese Remainder Theorem to improve performance for key generation.\newline
 
 \noindent \textbf{Private exponent $d$.} The following constraints must hold true for the private exponent $d$.
 
@@ -130,13 +130,58 @@ Regarding our actual implementation of method (iii), we closely follow the const
     \item $1 \equiv (ed) \pmod{LCM(p-1,q-1)}$.
 \end{enumerate}
 
-Implementing constraints for the private exponent $d$ is relatively straightforward. However, we do note that in the rare case when $d \leq 2^{nlen/2}$, new primes must be generated.
+Implementing constraints for the private exponent $d$ is relatively straightforward. However, we do consider that in the rare case when $d \leq 2^{nlen/2}$, new primes must be generated.
 
 \subsection{Encryption and Decryption}
 
 \section{Crypto Learning}
 
+Here, we overview a number of strengths and weaknesses of our RSA implementation. In particular, we discuss attacks that we do protect against, and attacks that would cause our implementation to fail.
+
+\subsection{Attacks via Insecure PRNGs}
+
+We generate pseudorandom numbers using the {\tt /dev/random} file, as specified in Section~\ref{sec:prng}. This is considered a cryptographically secure method for generating pseudorandom numbers and is widely used in practice. Even so, there exist several theoretical attacks on Linux's implementation of this PRNG.
+
+Gutterman \emph{et al.} perform an analysis of Linux's pseudorandom number generator (LRNG) and expose a number of security vulnerabilities~\cite{gutterman2006analysis}. More specifically, they reverse engineer LRNG and show that given the current state of the generator, it is possible to reconstruct previous states, thereby compromising the security of past usage. Further, they show that it is possible to measure and analyze the entropy created by the kernel. Bernstein presents a related
+attack in which monitoring one source of entropy could compromise the randomness of other sources of entropy~\cite{bernstein2014entropy}.
+
+While the latter attacks are theoretical, and to our knowledge have not been successful in practice, Gutterman also presents a denial of service attack that our implementation is susceptible to~\cite{gutterman2006analysis}. Since Linux's implementation of {\tt /dev/random} may block the output of bits when the entropy is low, one simple attack would be to simply read all the bits from {\tt /dev/random}, thereby blocking other users' access to new bits for a long
+period of time. More interestingly, an attack can also be performed remotely by triggering system requests for {\tt get\_random\_bytes}, which will block both {\tt /dev/random} and the non-blocking {\tt /dev/urandom} pool.
+
+One possible solution is to limit the per user consumption of random bits. Alternatively, we could avoid using {\tt /dev/random} altogether and instead generate pseudorandom numbers via hardware random number generators.
+
+\subsection{Common Modulus Attack}
+While the common modulus attack is simple, it is a case in point for the dangers of misusing RSA~\cite{boneh1999twenty}.
+
+In order to prevent having to generate a different modulus $n$ for different users, a developer might choose to fix $n$ for a number of users or for all users. This is insecure, since a user could use his/her own exponents $e$ and $d$ to factor the fixed $n$, thereby recovering the private key $d$ from some other user. Thus, the common modulus attack shows that the RSA modulus should not be fixed. Our implementation precludes this attack by generating a random modulus every time.
+This is done through calls to the {\tt gen\_primes} function.
+
+\subsection{Low Private Exponent Attack}
+In order to reduce the decryption time, a developer might choose a smaller value for the private exponent $d$ rather than a random value. Choosing a small $d$ can improve decryption performance (modular exponentation) by a factor of at least 10 for a 1024-bit modulus. However, Weiner shows that such a simplification is completely insecure~\cite{wiener1990cryptanalysis}. Boneh and Durfee further improve the bounds of Weiner's attack, showing that $d <
+n^{0.292}$ is susceptible to attack~\cite{boneh2000new}. There are two techniques to prevent this attack; both of which our implementation supports. 
+
+The first technique is to use a large public exponent $e$. Weiner shows that as long as $e > n^{1.5}$, this attack cannot be performed. In our implementation, we fix $e = 65537$. Thus, for $nlen = 1024$, our implementation supports this technique. However, this technique does not hold true for $nlen = 2048$ or $nlen = 3072$. This can be easily fixed by increasing $e$ to satisfy $nlen = 3072$, however, the downside is that it will increase encryption time. Nonetheless, the second technique, using
+the Chinese Remainder Theorem to speed up decryption, is fully supported by our implementation.
+
+\subsection{Low Public Exponent Attack}
+
+Similar to the latter attack, in order to reduce the encryption time, a developer might choose a smaller value for the public exponent $e$. This engenders a number of attacks on low public exponents, most of which are based on Coppersmith's theorem~\cite{coppersmith1997small}. While the smallest $e$ possible is 3, $e \geq 2^{16} + 1$ is recommended to prevent certain attacks. This is the value of $e$ that we use in our implementation. It is simple to increase $e$ for security, but this will result in a performance decline.
+
+\subsection{Partial Key Exposure Attack}
+
+Suppose that for a given private key $(n,d)$, some portion of the private exponent $d$ is exposed. Boneh \emph{et al.} show that recovering the rest of the private exponent $d$ is possible when the corresponding private exponent $e$ is small. Specifically, they show that it is possible to reconstruct all of $d$ as long as $e < \sqrt{n}$. In our implementation, $e = 65537$ and all $nlen$ are secure from such an attack. However, partial key exposure attacks do illustrate the importance
+of keeping the entire private key secret. This is one consideration that our implementation is lacking, and it will be interesting to explore this in the future.
+
+\subsection{Side-Channel Attacks}
+
+Kocher's seminal cryptanalysis of RSA via a timing attack shows that a clever attacker could measure the amount of time it takes for RSA decryption, thereby recovering the private exponent $d$~\cite{kocher1996timing}. Our implementation does not protect against such timing attacks, but there are two solutions that can be considered.
+
+The first is to introduce a delay so that decryption (modular exponentiation, in particular) takes a fixed amount of time. However, this would cause a decline in performance. The second solution is based on blinding, by which a randomization is introduced such that decryption is performed on a random message unknown to the attacker. Thus, such timing attacks cannot be performed.
+
+Kocher also discovered another side-channel attack by measuring the amount of power consumed during decryption. Since multiprecision multiplication causes greater power consumption, it is simple to detect the number of multiplications, thereby revealing information about the private exponent $d$. 
+
 \section{Secure Coding}
+
 
 \section{Summary}
 
