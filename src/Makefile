@@ -1,3 +1,6 @@
+test: rsa.c rsa.h test.c
+	gcc test.c rsa.c -lgmp -lcrypto -o test -g
+
 rsa: rsa.c rsa.h 
 	gcc rsa.c -lgmp -lcrypto -o rsa
 
