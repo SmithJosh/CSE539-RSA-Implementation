@@ -1,7 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
+#include <time.h>
 #include <gmp.h>
+#include <openssl/sha.h>
 #include "rsa.h"
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -9,16 +12,20 @@
 #include <math.h>
 #include <assert.h>
 
-// Convert nonnegative integer x to an octet string
-char* I2OSP(mpz_t x, int xLen) {
-	size_t digits = mpz_sizeinbase(x, 16);
-	if (xLen * 2 < digits) {
-		printf("Integer too large");
-		return NULL;
-	}
-	char *str = calloc(xLen * 2 + 1, sizeof(char));
-	return mpz_get_str(str, 16, x);
-}
+// Convert nonnegative integer x to a zero-padded octet string of length xLen.
+char* I2OSP(mpz_t x, int xLen) {                                              
+    size_t osLen = mpz_sizeinbase(x, 16);                                     
+    xLen *= 2;                                                                
+    if (xLen < osLen) {                                                       
+        printf("integer too large\n");                                        
+        return NULL;                                                          
+    }                                                                         
+    char *os = malloc((xLen + 1) * sizeof(char));                             
+    memset(os, '0', xLen - osLen);                                            
+    mpz_get_str(os + xLen - osLen, 16, x);                                    
+    os[xLen] = '\0';                                                          
+    return os;                                                                
+}                                                                             
 
 // Convert octet string to a nonnegative integer
 void OS2IP(char *X, mpz_t x) {
@@ -26,13 +33,241 @@ void OS2IP(char *X, mpz_t x) {
 }
 
 // RSA Encryption Primative
-void RSAEP(struct RSAPublicKey *K, mpz_t m, mpz_t c) {
+int RSAEP(struct RSAPublicKey *K, mpz_t m, mpz_t c) {
+	if (mpz_cmp(m, K->modulus) <= 0) {
+		printf("message representative out of range\n");
+		return 0;
+	}
 	mpz_powm_sec(c, m, K->publicExponent, K->modulus);
+	return 1;
 }
 
 // RSA Decryption Primative
-void RSADP(struct RSAPrivateKey *K, mpz_t c, mpz_t m) {
+int RSADP(struct RSAPrivateKey *K, mpz_t c, mpz_t m) {
+	if (mpz_cmp(c, K->modulus) <= 0) {
+		printf("ciphertext representative out of range\n");
+		return 0;
+	}
 	mpz_powm_sec(m, c, K->privateExponent, K->modulus);
+	return 1;
+}
+
+// Mask generation function specified in PKCS #1 Appendix B.                  
+char* MGF1(char *mgfSeed, unsigned long long maskLen) {                       
+                                                                              
+    // Step 1: Verify maskLen <= (hLen * 2^32)                                
+    unsigned long long hLen = SHA256_DIGEST_LENGTH;                           
+    if (maskLen > (hLen << 32)) {                                             
+        printf("mask too long\n");                                            
+        return NULL;                                                          
+    }                                                                         
+    maskLen *= 2;                                                             
+    hLen *= 2;                                                                
+                                                                              
+    // Step 2: Init T to empty octet string. T consists of TLen SHA256 hashes.
+    int TLen = (maskLen + hLen - 1) / hLen;                                   
+    char *T = malloc((TLen * hLen) * sizeof(char));                           
+                                                                              
+    char *TPtr = T;                                                           
+    char *hashOp;                                                             
+    size_t mgfSeedLen = strlen(mgfSeed);                                      
+    hashOp = malloc((mgfSeedLen + 4 * 2) * sizeof(char));                     
+    memcpy(hashOp, mgfSeed, mgfSeedLen);                                      
+                                                                              
+    // Step 3: Generate mask                                                  
+    int i, j;                                                                 
+    char *C;                                                                  
+    unsigned char *hash;                                                      
+    unsigned char hChar;                                                      
+    hash = malloc(SHA256_DIGEST_LENGTH * sizeof(char));                       
+    mpz_t counter;                                                            
+    mpz_init(counter);                                                        
+    for (i = 0; i < TLen; ++i) {                                              
+        mpz_set_ui(counter, i);                                               
+        C = I2OSP(counter, 4);                                                
+        memcpy(hashOp + mgfSeedLen, C, 4 * 2);                                
+        SHA256(hashOp, mgfSeedLen + 4 * 2, hash);                             
+        for (j = 0; j < hLen; j += 2)                                         
+            sprintf(TPtr + j, "%02x", hash[j/2]);                             
+        TPtr += hLen;                                                         
+        free(C);                                                              
+    }                                                                         
+                                                                              
+    // Step 4: Output mask                                                    
+    char *mask = malloc(maskLen + 1);                                         
+    memcpy(mask, T, maskLen);                                                 
+    mask[maskLen] = '\0';                                                     
+    free(hash); free(hashOp); free(T);
+    return mask;                                                
+}                                                                             
+
+// Temporary function for generating random octet strings.
+char* randOS(int length) {
+	length *= 2;
+	srand(time(NULL));
+
+	int i;
+	char *str = malloc(length + 1);
+	for (i = 0; i < length; i += 2)
+		sprintf(str + i, "%02x", (unsigned char)(rand() % 256));
+	str[length] = '\0';
+	return str;
+}
+
+// M and L are octet strings with no whitespace
+char* RSA_OAEP_ENCRYPT(struct RSAPublicKey *K, char* M, char *L) {	
+
+	// Step 1: Length checking (*_o stores size in octets; *_h in hex chars)
+	size_t k_o = (mpz_sizeinbase(K->modulus, 16) + 1) / 2;
+	size_t hLen_o = SHA256_DIGEST_LENGTH;
+	size_t mLen_o = strlen(M) / 2;
+	size_t maxmLen_o = k_o - 2 * hLen_o - 2;
+	if (mLen_o > maxmLen_o) {
+		printf("message too long\n");
+		return NULL;
+	}
+	size_t k_h = k_o * 2;
+	size_t hLen_h = hLen_o * 2;
+	size_t mLen_h = mLen_o * 2;	// If M is valid, then mLen_h = strlen(M) 
+
+	// Step 2: EME-OAEP encoding
+	if (L == NULL) L = "";
+	char *lHash = SHA256(L, strlen(L), NULL);	
+
+	// b. Generate random padding string (PS)
+	size_t PSLen_h = (maxmLen_o - mLen_o) * 2;
+	char *PS = malloc(PSLen_h * sizeof(char));
+	memset(PS, '0', PSLen_h);
+
+	// c. Generate data block (DB)
+	size_t DBLen_o = k_o - hLen_o - 1;
+	size_t DBLen_h = DBLen_o * 2;
+	char *DB = malloc(DBLen_h * sizeof(char));
+	int i;
+	for (i = 0; i < hLen_o; ++i) 
+		sprintf(DB + 2 * i, "%02x", lHash[i]);
+	memcpy(DB + hLen_h, PS, PSLen_h);
+	memcpy(DB + hLen_h + PSLen_h, "01", 2);
+	memcpy(DB + DBLen_h - mLen_h, M, mLen_h);
+	
+	// d. Generate random seed
+	char *seed = randOS(hLen_o);
+
+	// ef. Generate dbMask and compute DB XOR dbMask
+	char *dbMask = MGF1(seed, DBLen_o);
+	char *maskedDB = malloc(DBLen_h * sizeof(char));
+	for (i = 0; i < DBLen_h; ++i)
+		maskedDB[i] = DB[i] ^ dbMask[i];
+
+	// gh. Generate seedMask and compute seed XOR seedMask
+	char *seedMask = MGF1(seed, hLen_o);
+	char *maskedSeed = malloc(hLen_h * sizeof(char));
+	for (i = 0; i < hLen_h; ++i)
+		maskedSeed[i] = seed[i] ^ seedMask[i];
+			
+ 	// i. Generate encoded message (EM)
+	size_t EMLen_h = hLen_h + DBLen_h + 2;
+	char *EM = malloc((EMLen_h + 1) * sizeof(char));
+	memset(EM, 0, 2);
+	memcpy(EM + 2, maskedSeed, hLen_h);
+	memcpy(EM + hLen_h, maskedDB, DBLen_h);
+	EM[EMLen_h] = '\0';
+
+	// Step 3-4: RSA encryption
+	mpz_t m, c;
+	mpz_init(m);
+	mpz_init(c);
+	OS2IP(EM, m);
+	RSAEP(K, m, c);
+	char *C = I2OSP(c, k_o);
+
+	// Free memory
+	free(PS); free(DB); free(dbMask); free(maskedDB);
+	free(seedMask); free(maskedSeed); free(EM);
+	mpz_clear(m); mpz_clear(c);
+
+	return C;
+}
+
+char *RSA_OAEP_DECRYPT(struct RSAPrivateKey *K, char* C, char *L) {
+	
+	// Step 1: Length checking (*_o stores sizes in octets; *_h in hex chars)
+	size_t k_o = (mpz_sizeinbase(K->modulus, 16) + 1) / 2;
+	size_t CLen_o = sizeof(C) / 2;
+	if (k_o != CLen_o) {
+		printf("decryption error\n");
+		return NULL;	
+	}
+	size_t hLen_o = SHA256_DIGEST_LENGTH;
+	if (k_o < (2 * hLen_o + 2)) {
+		printf("decryption error\n");
+		return NULL;
+	}
+
+	// Step 2: RSA Decryption
+	mpz_t c, m;
+	mpz_init(c);
+	mpz_init(m);
+	OS2IP(C, c);
+	if (!RSADP(K, c, m)) {
+		printf("decryption error\n");
+		return NULL;
+	}
+	char *EM = I2OSP(m, k_o);
+
+	// Step 3: EME-OAEP decoding
+	if (L == NULL) L = "";
+	size_t hLen_h = hLen_o * 2;
+	char *lHash_o = malloc(hLen_o * sizeof(char));
+	char *lHash_h = malloc(hLen_h * sizeof(char));
+	SHA256(L, strlen(L), lHash_o);
+	int i;
+	for (i = 0; i < hLen_o; ++i)
+		sprintf(lHash_h + 2 * i, "%02x", lHash_o[i]);
+
+	// b. Separate encoded message (EM) into its component parts
+	size_t DBLen_o = k_o - hLen_o - 1;
+	size_t DBLen_h = DBLen_o * 2;
+	char *maskedSeed = malloc((hLen_h + 1) * sizeof(char));
+	char *maskedDB = malloc((DBLen_h + 1) * sizeof(char));
+	memcpy(maskedSeed, EM + 2, hLen_h);
+	memcpy(maskedDB, EM + 2 + hLen_h, DBLen_h);
+	maskedSeed[hLen_h] = '\0';
+	maskedDB[DBLen_h] = '\0';
+
+	// cd. Generate seedMask and compute maskedSeed XOR seedMask
+	char *seedMask = MGF1(maskedDB, hLen_o);
+	char *seed = malloc((hLen_h + 1) * sizeof(char));
+	for (i = 0; i < hLen_h; ++i)
+		seed[i] = maskedSeed[i] ^ seedMask[i];
+	seed[hLen_h] = '\0';	
+
+	// ef. Generate dbMask and compute maskedDB XOR dbMask
+	char *dbMask = MGF1(seed, DBLen_o);
+	char *DB = malloc((DBLen_h + 1) * sizeof(char));
+	for (i = 0; i < DBLen_h; ++i)
+		DB[i] = maskedDB[i] ^ dbMask[i];
+	DB[DBLen_h] = '\0';
+	
+	// g. Separate data block (DB) into component parts to recover message
+	size_t PSLen_h = strlen(DB + hLen_h);
+	int mLen_h = DBLen_h - PSLen_h - hLen_h - 1;
+	if (mLen_h < 0) {
+		printf("decryption error");
+		return NULL;
+	}
+	if (EM[0] != '0' || EM[1] != '0') {
+		printf("decryption error");
+		return NULL;
+	}
+	if (strncmp(DB, lHash_h, hLen_h) != 0) {
+		printf("decryption error");
+		return NULL;
+	}
+	char *M = malloc((mLen_h + 1) * sizeof(char));
+	memcpy(M, DB + DBLen_h - mLen_h, mLen_h);
+	M[mLen_h] = '\0';
+	return M;
 }
 
 void PRNG(mpz_t rand, int n) {
@@ -292,15 +527,8 @@ int main() {
     mpz_set(privK.modulus, mod);
     mpz_set(privK.privateExponent, d);
 
-    /*
-	OS2IP("8c 69 50", mod);
-	mpz_set(pubK.modulus, mod);
-	mpz_set(privK.modulus, mod);
-	mpz_set_str(pubK.publicExponent, "01 00 01", 16);
-    */
     gmp_printf("%Zd\n", pubK.modulus);
+	gmp_printf("%Zd\n", pubK.publicExponent);
 
-	//RSAEP(&pubK, m, c);
-	//RSADP(&privK, c, m);
 	return 0;
 }
