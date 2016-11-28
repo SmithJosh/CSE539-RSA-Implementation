@@ -447,14 +447,29 @@ void gen_primes(mpz_t p, mpz_t e, int n) {
     mpz_t xp, xp1, xp2, p1, p2;
     mpz_init(xp); mpz_init(xp1); mpz_init(xp2); mpz_init(p1); mpz_init(p2); 
     unsigned long int two = 2;
-    
-    PRNG(xp1, 104);
-    PRNG(xp2, 104);
 
-    while (mpz_probab_prime_p(xp1, 28) != 1) {
+    int len_aux = 0;
+    int mr_rounds = 0;
+    if (n == 1024) {
+        len_aux = 104;
+        mr_rounds = 28;
+    }
+    else if (n == 2048) {
+        len_aux = 144;
+        mr_rounds = 38;
+    }
+    else if (n == 3072) {
+        len_aux = 176;
+        mr_rounds = 41;
+    }
+    
+    PRNG(xp1, len_aux);
+    PRNG(xp2, len_aux);
+
+    while (mpz_probab_prime_p(xp1, mr_rounds) != 1) {
         mpz_add_ui(xp1, xp1, two); 
     }
-    while (mpz_probab_prime_p(xp2, 28) != 1) {
+    while (mpz_probab_prime_p(xp2, mr_rounds) != 1) {
         mpz_add_ui(xp2, xp2, two);
     }
     //gmp_printf("%s\n%Zd\n%Zd\n", "Auxiliary primes for p: ", xp1, xp2);
