@@ -29,10 +29,10 @@ int main() {
     mpz_sub_ui(qm1, q, one);
     gen_d(d, pm1, qm1, e, nlen);
 
-    mpz_set(pubK.modulus, mod);
+    mpz_set(pubK.modulus, n);
     mpz_set(pubK.publicExponent, e);
 
-    mpz_set(privK.modulus, mod);
+    mpz_set(privK.modulus, n);
     mpz_set(privK.privateExponent, d);
 
 	if (Test1(&pubK, &privK))
@@ -59,6 +59,8 @@ int Test1(struct RSAPublicKey *pubK, struct RSAPrivateKey *privK) {
 	char *C = RSAES_OAEP_ENCRYPT(pubK, message, NULL);
 	char *M = RSAES_OAEP_DECRYPT(privK, C, NULL);
 	if (!M) return -1;
+
+    printf("%s%s\n\n%s%s\n\n%s%s\n\n","M: ", message, "C: ", C, "Decrypted M: ", M); 
 	
 	return (strcmp(M, message) == 0);
 }
