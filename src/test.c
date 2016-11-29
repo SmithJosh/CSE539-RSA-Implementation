@@ -7,7 +7,7 @@
 int Test1(struct RSAPublicKey*, struct RSAPrivateKey*);
 
 int main() {
-    int nlen = 1024;
+    int nlen = 3072;
 	struct RSAPublicKey pubK;
 	struct RSAPrivateKey privK;
 	mpz_init(pubK.modulus);
