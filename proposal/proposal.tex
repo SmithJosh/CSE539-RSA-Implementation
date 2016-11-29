@@ -2,7 +2,7 @@
 %     Created: Mon Sep 26 12:00 AM 2016 M
 % Last Change: Mon Sep 26 12:00 AM 2016 M
 %
-\documentclass[a4paper]{article}
+\documentclass[letterpaper]{article}
 \usepackage{listings}
 
 \title{RSA Encryption and Decryption}
@@ -154,7 +154,7 @@ The PKCS {\#1} standard outlines two difference schemes for RSA encryption – R
 As specified in the standard, there are two primary data types used for RSA encryption – octet strings and multiple-precision integers. Octet strings are used to represent messages (i.e.\ plaintext and ciphertext) and the multiple-precision integers are used to perform the basic mathematical operations of the RSA scheme (i.e.\ exponentiation). To convert between the two, the standard specifies two data conversion primitives – I2OSP (Integer to Octet String) and OS2IP (Octet String to Integer). To represent the multiple-precision integers, we already decided on the GMP library. However, there were a couple options for how to represent the octet strings.
 
 \begin{enumerate}
-    \item Represent each octet as a single character: this is the most efficient way of representing octets, since each character can be any one of its possible 256 values. However, with this representation, string manipulation of octet strings became a challenge. Since $'\backslash0'$ is a valid octet, a NULL character cannot be used to represent the end of an octet string. This would require storing the length of the octet string separately. 
+    \item Represent each octet as a single character: this is the most efficient way of representing octets, since each character can be any one of its possible 256 values. However, with this representation, string manipulation of octet strings became a challenge. Since {\tt $'\backslash0'$} is a valid octet, a NULL character cannot be used to represent the end of an octet string. This would require storing the length of the octet string separately. 
 
     \item Represent each octet as two hex characters: this method is less efficient, as it requires two characters for each octet. But it allows for NULL-terminated octet strings, which is the standard way of representing strings in C. Furthermore, the GMP library has little support for base-256 octet strings, so this is the option we chose.
 \end{enumerate}
@@ -165,18 +165,12 @@ The two cryptographic primitives are RSAEP, which is the encryption primitive, a
 
 \subsection{RSAES-OAEP}
 
-RSAES-OAEP combines both of the cryptographic primitives aforementioned, and uses an encoding method based on Bellare and Rogaway's Optimal Assymetric Encryption Scheme~\cite{bellare1994optimal}. RSAES-OAEP is parameterized by a hash function and mask generation function that we describe further in Section~\ref{sec:hash}. Both the RSAES-OAEP-Encryption and RSAES-OAEP-Decryption operations are implemented as prescribed in the PKCS specification.
+RSAES-OAEP combines both of the cryptographic primitives aforementioned, and uses an encoding method based on Bellare and Rogaway's Optimal Assymetric Encryption Scheme~\cite{bellare1994optimal}. RSAES-OAEP is parameterized by a hash function and mask generation function. Both the RSAES-OAEP-Encryption and RSAES-OAEP-Decryption operations are implemented as prescribed in the PKCS specification.
 
 To accomplish the OAEP padding, the RSA-OAEP scheme makes use of a Mask Generation Function, which in turn is based on a secure hash. The PKCS \#1 standard recommends the use of a hashing algorithm from the SHA-2 hash family, but does not require any hash algorithm in particular. For our project, we decided to use the SHA-256 hash algorithm. Since the algorithm is not given in the standard, we used the implementation from the OpenSSL library.
 
 The representation of octets as pairs of hex characters worked fairly well, but there were some issues it caused. In particular, the OpenSSL SHA256 hash function uses outputs a base-256 octet string, which was not compatible with our octet string representation. Consequently, we had to convert back and forth between these formats, decreasing the performance of our implementation. It would have been better to have a single common format for octet strings. The simplest way to do this would probably have been to store the length of an octet string along with the data and represent all octet strings in base-256.
 
-
-\subsection{Hash and Mask Generation}\label{sec:hash}
-
-While there are numerous acceptable hash functions, SHA-512 and SHA-256 are recommended.
-Thus, erring for performance, we choose to use the OpenSSL SHA-256 implementation. The Mask Generation Function (MGF) is crucial for the security of the RSA encryption scheme as specified. 
-The MGF takes an octet string of varying length, and then outputs a pseudorandom octet string of a desired length. This means that the output cannot be predicted, and the provable securtiy of RSAES-OAEP relies on the MGF's randomness.
 
 \section{Crypto Learning}
 
@@ -218,13 +212,14 @@ of keeping the entire private key secret. This is one consideration that our imp
 
 \subsection{Side-Channel Attacks}
 
-Kocher's seminal cryptanalysis of RSA via a timing attack shows that a clever attacker could measure the amount of time it takes for RSA decryption, thereby recovering the private exponent $d$~\cite{kocher1996timing}. Our implementation does not protect against such timing attacks, but there are two solutions that can be considered.
+Kocher's seminal cryptanalysis of RSA via a timing attack shows that a clever attacker could measure the amount of time it takes for RSA decryption, thereby recovering the private exponent $d$~\cite{kocher1996timing}. Our implementation does not protect against such timing attacks.
 
-The first is to introduce a delay so that decryption (modular exponentiation, in particular) takes a fixed amount of time. However, this would cause a decline in performance. The second solution is based on blinding, by which a randomization is introduced such that decryption is performed on a random message unknown to the attacker. Thus, such timing attacks cannot be performed.
+There were two main security concerns addressed by the PKCS \#1 standard, both timing attacks. The first deals with the RSA encryption (RSAEP) and decryption (RSADP) primitives. Both of these primitives implement exponentiation and so take longer to run as the length of the encryption and decryption exponents increases. To prevent timing attacks on these functions, we used a function provided by GMP – {\tt mpz\_powm\_sec()} – which is intended for cryptographic applications. It is designed to run in constant time and have the same cache patterns across inputs of the same size, and so provides resilience to these kinds of side-channel attacks.
 
-Kocher also discovered another side-channel attack by measuring the amount of power consumed during decryption. Since multiprecision multiplication causes greater power consumption, it is simple to detect the number of multiplications, thereby revealing information about the private exponent $d$. 
+Likewise, there is a potential timing attack on the {\tt RSAES-OAEP-DECRYPT()} function. When decrypting a ciphertext, the function performs several checks on the decrypted data block to ensure that decryption was successful before returning the plaintext M. The standard states that it is important to ensure that an opponent cannot distinguish which error condition caused decryption to fail, as this gives important information to an attacker. To satisfy this requirement, we eliminated all branches from the error conditions, and perform all of them every time (no short-circuiting). At the end, if any one of them failed, then an error code is returned. This should cause the error checking to run in constant time and provide resilience against timing attacks.
 
-Another security concern we encountered when implementing the BigInteger library was a potential timing attack when performing modular exponentiation. The larger the encryption exponent, the long a na\"{i}ve implementation will take, and this leaks information about the length of the encryption exponent if an attacker can observe the time it takes to perform the exponentiation. For exponentiation using Montgomery multiplication, there is a modification called Montgomery’s Ladder which is used to make exponentiation run in constant time. We did not implement this modification, but it would be interesting to do so in the future.
+Kocher also discovered another side-channel attack by measuring the amount of power consumed during decryption. Since multiprecision multiplication causes greater power consumption, it is simple to detect the number of multiplications, thereby revealing information about the private exponent $d$. It would be interesting to examine this further.
+
 \section{Secure Coding}
 
 We next overview secure coding practices that we considered for our implementation, as well as practices that could have further improved our code. These are mostly based on the SEI CERT C Coding Standard~\cite{seacord2008cert}.
